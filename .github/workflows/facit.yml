@@ -37,7 +37,6 @@ jobs:
           FOOTBALLDATA_TOKEN: ${{ secrets.FOOTBALLDATA_TOKEN }}
           # FOOTBALLDATA_SEASON: ''   # avkommentera om season-filtret skulle krangla
         # Skriv till samma mapp som VM2026-Facit.html ligger i.
-        # Ligger HTML-filerna i en undermapp i repot: byt till  VM2026/results.json
         run: python3 facit_update.py results.json
 
       - name: Kolla om results.json andrats
@@ -56,8 +55,11 @@ jobs:
         env:
           SFTP_USER: ${{ secrets.SFTP_USER }}
           SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
-          # Matcha sokvagen till mappen dar VM2026-Facit.html ligger (se i FileZilla):
-          REMOTE_PATH: '/VM2026/results.json'
+          # Din Strato-server (Kunden-Login > SFTP & SSH, faltet "Server"):
+          SFTP_HOST: '5020379169.ssh.w2.strato.hosting'
+          # Sokvag RELATIVT startkatalogen /Hemsida (= din webbrot).
+          # VM2026-mappen ligger alltsa i /Hemsida/VM2026/ -> sokvagen blir:
+          REMOTE_PATH: 'VM2026/results.json'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq sshpass
@@ -67,7 +69,7 @@ jobs:
             -o UserKnownHostsFile=/dev/null \
             -P 22 \
             -b /tmp/sftp_batch.txt \
-            "$SFTP_USER@ssh.strato.de"
+            "$SFTP_USER@$SFTP_HOST"
           echo "results.json uppladdad till Strato via SFTP (${REMOTE_PATH})."
 
       - name: Committa for versionshistorik
