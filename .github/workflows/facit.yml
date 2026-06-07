@@ -1,0 +1,81 @@
+name: Uppdatera VM-facit
+
+# Schemalagt så tätt som gratisplanerna tillåter:
+#  - GitHubs minsta intervall för schemalagda jobb är var 5:e minut (*/5).
+#  - Skriptet gör 1 anrop per körning; football-data.org gratis tillåter 10/min.
+#    => var 5:e minut = 12 anrop/timme = ~2 % av tillåtna mängden. Massor av marginal.
+# OBS: kör repot som PUBLIC för obegränsade gratis Actions-minuter (privat: 2000 min/mån,
+#      vilket */5 skulle göra slut på). Tiderna är i UTC. GitHub kan fördröja/hoppa
+#      över schemalagda körningar vid hög last — det är normalt.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'      # var 5:e minut (snabbaste möjliga schema)
+  workflow_dispatch: {}          # låter dig köra manuellt från Actions-fliken
+
+permissions:
+  contents: write                # behövs för att kunna committa results.json
+
+concurrency:
+  group: facit                   # serialiserar körningar så de aldrig krockar
+  cancel-in-progress: false
+
+jobs:
+  uppdatera:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hamta repo
+        uses: actions/checkout@v4
+
+      - name: Satt upp Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Hamta resultat och skriv results.json
+        env:
+          FOOTBALLDATA_TOKEN: ${{ secrets.FOOTBALLDATA_TOKEN }}
+          # FOOTBALLDATA_SEASON: ''   # avkommentera om season-filtret skulle krangla
+        # Skriv till samma mapp som VM2026-Facit.html ligger i.
+        # Ligger HTML-filerna i en undermapp i repot: byt till  VM2026/results.json
+        run: python3 facit_update.py results.json
+
+      - name: Kolla om results.json andrats
+        id: check
+        run: |
+          if git status --porcelain results.json | grep -q .; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "Ny data — laddar upp och committar."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Ingen andring — hoppar over uppladdning och commit."
+          fi
+
+      - name: Ladda upp results.json till Strato (SFTP, krypterat)
+        if: steps.check.outputs.changed == 'true'
+        env:
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+          # Matcha sokvagen till mappen dar VM2026-Facit.html ligger (se i FileZilla):
+          REMOTE_PATH: '/VM2026/results.json'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+          echo "put results.json ${REMOTE_PATH}" > /tmp/sftp_batch.txt
+          sshpass -p "$SFTP_PASSWORD" sftp \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -P 22 \
+            -b /tmp/sftp_batch.txt \
+            "$SFTP_USER@ssh.strato.de"
+          echo "results.json uppladdad till Strato via SFTP (${REMOTE_PATH})."
+
+      - name: Committa for versionshistorik
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name  "vm2026-facit-bot"
+          git config user.email "actions@github.com"
+          git add results.json
+          git commit -m "Uppdatera VM-facit ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          git push
+          echo "results.json committad och pushad."
