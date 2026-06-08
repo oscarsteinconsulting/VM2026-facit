@@ -57,13 +57,11 @@ jobs:
           SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
           # Din Strato-server (Kunden-Login > SFTP & SSH, faltet "Server"):
           SFTP_HOST: '5020379169.ssh.w2.strato.hosting'
-          # Mapp RELATIVT startkatalogen /Hemsida (= din webbrot), dar VM2026-Facit.html ligger:
-          REMOTE_DIR: 'VM2026'
+          # Sokvag RELATIVT startkatalogen /Hemsida -> hamnar i /Hemsida/VM2026/:
+          REMOTE_PATH: 'VM2026/results.json'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lftp
-          lftp -u "$SFTP_USER","$SFTP_PASSWORD" "sftp://$SFTP_HOST" -e "set cmd:fail-exit yes; set sftp:auto-confirm yes; set net:timeout 20; set net:max-retries 2; cd $REMOTE_DIR; put results.json; bye"
-          echo "results.json uppladdad till Strato via SFTP ($REMOTE_DIR/results.json)."
+          pip install --quiet paramiko
+          python3 -c "import os,paramiko; t=paramiko.Transport((os.environ['SFTP_HOST'],22)); t.connect(username=os.environ['SFTP_USER'],password=os.environ['SFTP_PASSWORD']); s=paramiko.SFTPClient.from_transport(t); s.put('results.json',os.environ['REMOTE_PATH']); s.close(); t.close(); print('results.json uppladdad till '+os.environ['REMOTE_PATH'])"
 
       - name: Committa for versionshistorik
         if: steps.check.outputs.changed == 'true'
