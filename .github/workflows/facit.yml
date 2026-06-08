@@ -36,7 +36,6 @@ jobs:
         env:
           FOOTBALLDATA_TOKEN: ${{ secrets.FOOTBALLDATA_TOKEN }}
           # FOOTBALLDATA_SEASON: ''   # avkommentera om season-filtret skulle krangla
-        # Skriv till samma mapp som VM2026-Facit.html ligger i.
         run: python3 facit_update.py results.json
 
       - name: Kolla om results.json andrats
@@ -61,7 +60,23 @@ jobs:
           REMOTE_PATH: 'VM2026/results.json'
         run: |
           pip install --quiet paramiko
-          python3 -c "import os,paramiko; t=paramiko.Transport((os.environ['SFTP_HOST'],22)); t.connect(username=os.environ['SFTP_USER'],password=os.environ['SFTP_PASSWORD']); s=paramiko.SFTPClient.from_transport(t); s.put('results.json',os.environ['REMOTE_PATH']); s.close(); t.close(); print('results.json uppladdad till '+os.environ['REMOTE_PATH'])"
+          cat > _sftp_upload.py << 'PYEOF'
+          import os, paramiko
+          host = os.environ["SFTP_HOST"]; user = os.environ["SFTP_USER"]
+          pw = os.environ["SFTP_PASSWORD"]; remote = os.environ["REMOTE_PATH"]
+          t = paramiko.Transport((host, 22))
+          t.start_client(timeout=20)
+          try:
+              t.auth_password(user, pw)
+          except paramiko.ssh_exception.AuthenticationException:
+              # Strato kraver ofta keyboard-interactive i stallet for ren losenordsmetod
+              t.auth_interactive(user, lambda title, instr, prompts: [pw for _ in prompts])
+          sftp = paramiko.SFTPClient.from_transport(t)
+          sftp.put("results.json", remote)
+          sftp.close(); t.close()
+          print("results.json uppladdad till " + remote)
+          PYEOF
+          python3 _sftp_upload.py
 
       - name: Committa for versionshistorik
         if: steps.check.outputs.changed == 'true'
