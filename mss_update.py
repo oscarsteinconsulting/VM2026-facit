@@ -383,10 +383,13 @@ def main():
                     help="Skriv mss_input.example.json att fylla i, och avsluta.")
     ap.add_argument("--input", default="mss_input.json",
                     help="Konfig med CIES-värden + omdömesfaktorer (skarp körning).")
-    ap.add_argument("--output", default="mss.json", help="Utfil.")
+    ap.add_argument("--output", default="mss.json", help="Utfil (kan även anges positionellt).")
+    ap.add_argument("outfile", nargs="?", default=None,
+                    help="Utfil positionellt — samma som --output (t.ex. mss_update.py mss.json).")
     ap.add_argument("--year", type=int, default=None,
                     help="Årsfil för 12-mån-Elo (default: i fjol).")
     args = ap.parse_args()
+    out_path = args.outfile or args.output    # positionellt vinner om båda anges
 
     if args.init:
         write_example_input("mss_input.example.json")
@@ -463,7 +466,7 @@ def main():
 
     rows = compute_mss(elo_now, elo_prev, cfg)
     print_table(rows)
-    write_output(rows, args.output)
+    write_output(rows, out_path)
 
 
 if __name__ == "__main__":
