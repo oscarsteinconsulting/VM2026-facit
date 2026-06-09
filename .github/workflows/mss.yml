@@ -1,1 +1,98 @@
 
+name: Uppdatera MSS-modell
+
+# Raknar om MSS (Oscars funderingar) och laddar upp mss.json till Strato.
+#  - Ranking + Form hamtas LIVE fran eloratings.net (ingen token, ingen pip).
+#  - Talang + omdomesfaktorer (M/K/S) + reserv-Elo ligger i mss_input.json i repot.
+#  - MSS andras langsamt (Elo uppdateras efter matchdagar) -> en korning per dag racker.
+#    Vill du ha tatare under turneringen: lagg till fler cron-rader (t.ex. en kvallstid).
+# OBS: kor repot som PUBLIC for obegransade gratis Actions-minuter. Tider ar i UTC.
+#      GitHub kan fordroja/hoppa over schemalagda korningar vid hog last — det ar normalt.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'          # varje dag 06:00 UTC (lagg garna till fler rader)
+  workflow_dispatch: {}           # later dig kora manuellt fran Actions-fliken
+
+permissions:
+  contents: write                 # behovs for att kunna committa mss.json
+
+concurrency:
+  group: mss                      # serialiserar korningar sa de aldrig krockar
+  cancel-in-progress: false
+
+jobs:
+  uppdatera:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hamta repo
+        uses: actions/checkout@v4
+
+      - name: Satt upp Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Rakna om MSS och skriv mss.json
+        # Live-Elo fran eloratings.net vinner; reserv-Elo + d12 i mss_input.json
+        # anvands om hamtningen skulle faila, sa korningen aldrig stannar.
+        # Loggen visar "X live, Y ur konfig-reserv" — kolla den efter forsta korningen.
+        run: python3 mss_update.py mss.json
+
+      - name: Kolla om mss.json andrats
+        id: check
+        run: |
+          if git status --porcelain mss.json | grep -q .; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "Ny modelldata — laddar upp och committar."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Ingen andring — hoppar over uppladdning och commit."
+          fi
+
+      - name: Ladda upp mss.json till Strato (SFTP, krypterat)
+        if: steps.check.outputs.changed == 'true'
+        env:
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+          # Din Strato-server (Kunden-Login > SFTP & SSH, faltet "Server"):
+          SFTP_HOST: '5020379169.ssh.w2.strato.hosting'
+          # Sokvag RELATIVT startkatalogen /Hemsida -> hamnar i /Hemsida/VM2026/:
+          REMOTE_PATH: 'VM2026/mss.json'
+        run: |
+          pip install --quiet paramiko
+          cat > _sftp_upload.py << 'PYEOF'
+          import os, paramiko
+          host = os.environ["SFTP_HOST"]; user = os.environ["SFTP_USER"]
+          pw = os.environ["SFTP_PASSWORD"]; remote = os.environ["REMOTE_PATH"]
+          ki = lambda a, b, prompts: [pw for _ in prompts]
+          def try_auth(method):
+              t = paramiko.Transport((host, 22))
+              t.start_client(timeout=20)
+              t.auth_interactive(user, ki) if method == "interactive" else t.auth_password(user, pw)
+              return t
+          transport = None
+          errors = []
+          for method in ("interactive", "password"):
+              try:
+                  transport = try_auth(method); print("Inloggad via " + method); break
+              except Exception as e:
+                  errors.append(method + ": " + str(e))
+          if transport is None:
+              raise SystemExit("Inloggning misslyckades. " + " | ".join(errors))
+          sftp = paramiko.SFTPClient.from_transport(transport)
+          sftp.put("mss.json", remote)
+          sftp.close(); transport.close()
+          print("mss.json uppladdad till " + remote)
+          PYEOF
+          python3 _sftp_upload.py
+
+      - name: Committa for versionshistorik
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name  "vm2026-mss-bot"
+          git config user.email "actions@github.com"
+          git add mss.json
+          git commit -m "Uppdatera MSS-modell ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          git push
+          echo "mss.json committad och pushad."
