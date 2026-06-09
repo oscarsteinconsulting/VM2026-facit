@@ -1,11 +1,15 @@
-
 name: Uppdatera MSS-modell
 
 # Raknar om MSS (Oscars funderingar) och laddar upp mss.json till Strato.
 #  - Ranking + Form hamtas LIVE fran eloratings.net (ingen token, ingen pip).
 #  - Talang + omdomesfaktorer (M/K/S) + reserv-Elo ligger i mss_input.json i repot.
 #  - MSS andras langsamt (Elo uppdateras efter matchdagar) -> en korning per dag racker.
-#    Vill du ha tatare under turneringen: lagg till fler cron-rader (t.ex. en kvallstid).
+#
+# FRYS: prognosen ska INTE andras nar turneringen val borjat. Workflowen uppdaterar
+#       fram till FREEZE_DATE och fryser sig sjalv darefter (ingen omrakning/uppladdning).
+#       Den sista korningen fore FREEZE_DATE blir den officiella, frysta prognosen.
+#       For ett nytt masterskap: andra FREEZE_DATE till forsta matchens datum.
+#
 # OBS: kor repot som PUBLIC for obegransade gratis Actions-minuter. Tider ar i UTC.
 #      GitHub kan fordroja/hoppa over schemalagda korningar vid hog last — det ar normalt.
 
@@ -24,16 +28,32 @@ concurrency:
 jobs:
   uppdatera:
     runs-on: ubuntu-latest
+    env:
+      FREEZE_DATE: '2026-06-11'   # forsta VM-matchen. Fr.o.m. detta datum ar prognosen FRYST.
     steps:
       - name: Hamta repo
         uses: actions/checkout@v4
 
+      - name: Frys-koll (las prognosen nar VM borjat)
+        id: freeze
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          if [[ "$today" < "$FREEZE_DATE" ]]; then
+            echo "frozen=false" >> "$GITHUB_OUTPUT"
+            echo "Fore $FREEZE_DATE ($today): prognosen far uppdateras."
+          else
+            echo "frozen=true" >> "$GITHUB_OUTPUT"
+            echo "VM har borjat (>= $FREEZE_DATE, idag $today): prognosen ar FRYST. Hoppar over omrakning och uppladdning."
+          fi
+
       - name: Satt upp Python
+        if: steps.freeze.outputs.frozen == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Rakna om MSS och skriv mss.json
+        if: steps.freeze.outputs.frozen == 'false'
         # Live-Elo fran eloratings.net vinner; reserv-Elo + d12 i mss_input.json
         # anvands om hamtningen skulle faila, sa korningen aldrig stannar.
         # Loggen visar "X live, Y ur konfig-reserv" — kolla den efter forsta korningen.
@@ -41,6 +61,7 @@ jobs:
 
       - name: Kolla om mss.json andrats
         id: check
+        if: steps.freeze.outputs.frozen == 'false'
         run: |
           if git status --porcelain mss.json | grep -q .; then
             echo "changed=true"  >> "$GITHUB_OUTPUT"
@@ -51,7 +72,7 @@ jobs:
           fi
 
       - name: Ladda upp mss.json till Strato (SFTP, krypterat)
-        if: steps.check.outputs.changed == 'true'
+        if: steps.freeze.outputs.frozen == 'false' && steps.check.outputs.changed == 'true'
         env:
           SFTP_USER: ${{ secrets.SFTP_USER }}
           SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
@@ -88,7 +109,7 @@ jobs:
           python3 _sftp_upload.py
 
       - name: Committa for versionshistorik
-        if: steps.check.outputs.changed == 'true'
+        if: steps.freeze.outputs.frozen == 'false' && steps.check.outputs.changed == 'true'
         run: |
           git config user.name  "vm2026-mss-bot"
           git config user.email "actions@github.com"
