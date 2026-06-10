@@ -1,7 +1,7 @@
 {
   "model": "Oscars funderingar (Klementmodellen)",
   "source": "live",
-  "generated": "2026-06-09",
+  "generated": "2026-06-10",
   "weights": {
     "R": 0.38,
     "T": 0.22,
